@@ -1,0 +1,43 @@
+# Full stack in containers: Postgres + daily pipeline + API + dashboard.
+#   docker compose up --build
+services:
+  db:
+    image: postgres:17.6
+    environment:
+      POSTGRES_USER: pokeprice
+      POSTGRES_PASSWORD: pokeprice
+      POSTGRES_DB: pokeprice
+    ports: ["5433:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pokeprice"]
+      interval: 5s
+      retries: 10
+
+  pipeline:
+    build: .
+    env_file: [{path: .env, required: false}]
+    environment:
+      DATABASE_URL: postgresql+psycopg://pokeprice:pokeprice@db:5432/pokeprice
+    depends_on: {db: {condition: service_healthy}}
+    # run now, then once a day
+    command: sh -c "while true; do python pipeline.py; sleep 86400; done"
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://pokeprice:pokeprice@db:5432/pokeprice
+    depends_on: {db: {condition: service_healthy}}
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    ports: ["8000:8000"]
+
+  dashboard:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://pokeprice:pokeprice@db:5432/pokeprice
+    depends_on: {db: {condition: service_healthy}}
+    command: streamlit run dashboard/app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
+    ports: ["8501:8501"]
+
+volumes:
+  pgdata:

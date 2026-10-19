@@ -1,0 +1,6 @@
+.venv
+.pgdata
+data
+.env
+__pycache__
+.git
