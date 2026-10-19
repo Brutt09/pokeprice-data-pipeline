@@ -6,7 +6,7 @@ import pytest
 from ingestion.pokemon_prices import parse_prices
 from ingestion.tcgdex import parse_cardmarket_prices, parse_variants
 from pricing.estimator import listing_confidence, mad_outliers, weighted_median
-from transformation.matching import Card, match_listing
+from transformation.matching import Card, index_by_number, match_listing
 from transformation.normalize import parse_title
 
 
@@ -29,7 +29,6 @@ def test_parse_title_fields(title, number, total, grade, finish):
     ("Pokemon 151 Booster Bundle 6 packs NEW", "sealed_product"),
     ("Lot of 50 Pokemon 151 cards bulk", "lot"),
     ("Charizard ex 199/165 PROXY custom card", "fake"),
-    ("Charizard ex 201/165 Japanese SV2a", "non_english"),
     ("Pikachu Pokemon 151 Choose Your Card", "multi_choice"),
 ])
 def test_parse_title_excludes_non_singles(title, flag):
@@ -47,8 +46,9 @@ CATALOGUE = [
     Card("sv03.5-199", "Charizard ex", "charizard ex", 199, 165, "special illustration rare", ["holo"]),
     Card("sv03.5-151", "Mew ex", "mew ex", 151, 165, "double rare", ["holo"]),
     Card("sv03.5-001", "Bulbasaur", "bulbasaur", 1, 165, "common", ["normal", "reverse"]),
+    Card("sv2a-201", "Charizard ex", "charizard ex", 201, 165, "special illustration rare", ["holo"], "ja"),
 ]
-BY_NUMBER = {c.number: [c] for c in CATALOGUE}
+BY_NUMBER = index_by_number(CATALOGUE)
 
 
 def listing(title):
@@ -90,6 +90,17 @@ def test_short_name_inside_set_alias_does_not_win():
 def test_number_name_conflict_is_not_auto():
     m = match_listing(listing("Bulbasaur 199/165"), CATALOGUE, BY_NUMBER)
     assert m.status != "auto"
+
+
+def test_japanese_listing_matches_japanese_print_only():
+    m = match_listing(listing("Charizard ex 201/165 SV2a Japanese Pokemon Card 151"), CATALOGUE, BY_NUMBER)
+    assert (m.card_id, m.status) == ("sv2a-201", "auto")
+
+
+def test_japanese_listing_never_matches_english_print():
+    # 006 exists only in English in this catalogue -> no Japanese candidate by number
+    m = match_listing(listing("Charizard ex 006/165 Japanese"), CATALOGUE, BY_NUMBER)
+    assert m.card_id != "sv03.5-006"
 
 
 def test_excluded_listing_is_rejected():
@@ -170,3 +181,72 @@ def test_snapshot_timestamp_jitter_is_removed():
     oa = parse_cardmarket_prices(parse_variants(a)[0])
     ob = parse_cardmarket_prices(parse_variants(b)[0])
     assert {o["observed_at"] for o in oa} == {o["observed_at"] for o in ob}
+
+
+# ---------- Bulbapedia scraper parsing ----------
+# Rows shaped like the live set-list table (Bulbapedia, CC BY-NC-SA 2.5).
+def cell(text="", alts=()):
+    return {"text": text, "alts": list(alts)}
+
+
+BULBA_ROWS = [
+    [cell("Pokémon Card 151")],
+    [cell("No."), cell("Mark"), cell("Card name"), cell("Type"), cell("Rarity"), cell("Promotion")],
+    [cell("006/165"), cell("", ["G"]), cell("Charizard", ["ex"]), cell("", ["Fire"]), cell("", ["RR"]), cell("")],
+    [cell("197/165"), cell("", ["G"]), cell("Giovanni's Charisma"), cell("Su"), cell("", ["SR"]), cell("")],
+    [cell("201/165"), cell("", ["G"]), cell("Charizard", ["ex"]), cell("", ["Fire"]), cell("", ["SAR"]), cell("")],
+    [cell("")],
+]
+
+
+def test_parse_bulbapedia_rows():
+    from ingestion.bulbapedia import parse_set_rows
+    cards = parse_set_rows(BULBA_ROWS)
+    assert [(c["number"], c["name"], c["rarity"]) for c in cards] == [
+        (6, "Charizard ex", "Double rare"),
+        (197, "Giovanni's Charisma", "Ultra Rare"),
+        (201, "Charizard ex", "Special illustration rare"),
+    ]
+
+
+def test_jp_card_links_to_english_print_by_name_and_rarity():
+    from ingestion.bulbapedia import link_equivalent
+    en = [SimpleNamespace(card_id="sv03.5-006", name="Charizard ex", rarity="Double rare", collector_number=6),
+          SimpleNamespace(card_id="sv03.5-183", name="Charizard ex", rarity="Ultra Rare", collector_number=183),
+          SimpleNamespace(card_id="sv03.5-199", name="Charizard ex", rarity="Special illustration rare",
+                          collector_number=199)]
+    jp_sar = {"name": "Charizard ex", "rarity": "Special illustration rare", "number": 201}
+    assert link_equivalent(jp_sar, en) == ("sv03.5-199", "name+rarity")
+    assert link_equivalent({"name": "Mewtwo", "rarity": "Rare", "number": 150}, en) == (None, "unlinked")
+
+
+def test_scraper_refuses_sites_without_reviewed_terms():
+    from ingestion.scraper import PoliteScraper, ScrapeNotAllowed
+    with pytest.raises(ScrapeNotAllowed):
+        PoliteScraper("x").check_allowed("https://www.tcgplayer.com/product/1")
+
+
+def test_japanese_mirror_holo_is_reverse_finish():
+    p = parse_title("Gastly Mirror Holo sv2a 092/165 JPN")
+    assert (p["parsed_language"], p["parsed_finish"]) == ("ja", "reverse")
+
+
+# ---------- PokemonPriceTracker parsing (both documented response shapes) ----------
+def test_ppt_graded_prices_shape():
+    from ingestion.pokepricetracker import parse_graded
+    out = parse_graded({"gradedPrices": {"psa10": 15750.0, "psa9": 1850.0, "bogus": 3}})
+    assert {(o["grade"], o["price_usd"]) for o in out} == {("PSA 10", 15750.0), ("PSA 9", 1850.0)}
+
+
+def test_ppt_ebay_sales_list_shape_uses_median_and_count():
+    from ingestion.pokepricetracker import parse_graded
+    out = parse_graded({"ebay_data": {"psa_10_sales": [{"price": 200.0}, {"price": 210.0}, {"price": 900.0}]}})
+    assert out == [{"grade": "PSA 10", "price_usd": 210.0, "sample_size": 3}]
+
+
+def test_ppt_sold_data_beats_bare_graded_price():
+    from ingestion.pokepricetracker import parse_graded
+    out = parse_graded({"gradedPrices": {"psa10": 999.0},
+                        "ebay": {"psa10": {"averagePrice": 300.0, "count": 12}, "cgc9.5": {"avg": 150, "count": 2}}})
+    assert sorted((o["grade"], o["price_usd"], o["sample_size"]) for o in out) == \
+        [("CGC 9.5", 150.0, 2), ("PSA 10", 300.0, 12)]

@@ -42,6 +42,7 @@ class Card:
     set_total: int | None
     rarity: str
     finishes: list[str]
+    language: str = "en"
 
 
 @dataclass
@@ -75,14 +76,26 @@ def status_for(score: float) -> str:
     return "auto" if score >= AUTO_THRESHOLD else ("review" if score >= REVIEW_THRESHOLD else "rejected")
 
 
-def match_listing(listing, cards: list[Card], by_number: dict[int, list[Card]]) -> Match:
+def index_by_number(cards: list[Card]) -> dict[tuple[str, int], list[Card]]:
+    idx: dict[tuple[str, int], list[Card]] = {}
+    for c in cards:
+        idx.setdefault((c.language, c.number), []).append(c)
+    return idx
+
+
+def match_listing(listing, cards: list[Card], by_number: dict[tuple[str, int], list[Card]]) -> Match:
     grade = listing.parsed_grade or "RAW"
     if listing.is_excluded:
         return Match(None, None, None, 0, "excluded:" + ",".join(listing.flags or []), "rejected")
     title = listing.title_clean
+    # Language is part of the product: a Japanese listing only matches Japanese prints.
+    lang = getattr(listing, "parsed_language", None) or "en"
+    cards = [c for c in cards if c.language == lang]
+    if not cards:
+        return Match(None, None, None, 0, f"no_catalogue:{lang}", "rejected")
 
-    if listing.parsed_number is not None and listing.parsed_number in by_number:
-        cands = [c for c in by_number[listing.parsed_number]
+    if listing.parsed_number is not None and (lang, listing.parsed_number) in by_number:
+        cands = [c for c in by_number[(lang, listing.parsed_number)]
                  if listing.parsed_set_total in (None, c.set_total)]
         if cands:
             best = max(cands, key=lambda c: name_score(c.name_clean, title))
@@ -118,12 +131,13 @@ def match_listing(listing, cards: list[Card], by_number: dict[int, list[Card]]) 
 def load_catalogue(conn) -> list[Card]:
     rows = conn.execute(text("""
         select c.card_id, c.name, c.collector_number, c.set_official_count, lower(coalesce(c.rarity, '')) rarity,
+               c.language,
                array_agg(distinct v.finish) filter (where not v.is_special) finishes
         from cards c join card_variants v on v.card_id = c.card_id
         where c.collector_number is not null
         group by c.card_id""")).all()
     return [Card(r.card_id, r.name, clean_title(r.name), r.collector_number, r.set_official_count,
-                 r.rarity, r.finishes or ["normal"]) for r in rows]
+                 r.rarity, r.finishes or ["normal"], r.language) for r in rows]
 
 
 def evaluate(conn) -> dict:
@@ -160,12 +174,10 @@ def evaluate(conn) -> dict:
 def run(stats) -> dict:
     with engine().begin() as conn:
         cards = load_catalogue(conn)
-        by_number: dict[int, list[Card]] = {}
-        for c in cards:
-            by_number.setdefault(c.number, []).append(c)
+        by_number = index_by_number(cards)
         listings = conn.execute(text("""
             select source, listing_id, title_clean, parsed_number, parsed_set_total, parsed_grade,
-                   parsed_finish, flags, is_excluded
+                   parsed_finish, parsed_language, flags, is_excluded
             from listings where normalized_at is not null""")).all()
         counts = {"auto": 0, "review": 0, "rejected": 0}
         for l in listings:

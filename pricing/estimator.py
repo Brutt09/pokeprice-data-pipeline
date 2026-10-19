@@ -148,21 +148,51 @@ def listing_estimates(conn, now: datetime) -> tuple[list[dict], int]:
     return out, outliers_total
 
 
+def sales_estimates(conn) -> list[dict]:
+    """Sold-price estimate per (card, finish, grade) from eBay sold averages.
+    Snapshots in the window are combined by a median weighted by sample size."""
+    rows = conn.execute(text("""
+        select card_id, finish, grade, price_eur, sample_size, observed_at
+        from price_observations
+        where source = 'ebay_sold_via_ppt' and price_type = 'sold_avg'
+          and observed_at >= now() - make_interval(days => :d)"""), {"d": LISTING_WINDOW_DAYS}).all()
+    groups = defaultdict(list)
+    for r in rows:
+        groups[(r.card_id, r.finish, r.grade)].append(r)
+    out = []
+    for (card_id, finish, grade), obs in groups.items():
+        values = [float(o.price_eur) for o in obs]
+        weights = [max(o.sample_size or 1, 1) for o in obs]
+        latest_n = max(obs, key=lambda o: o.observed_at).sample_size or 0
+        out.append({
+            "card_id": card_id, "finish": finish, "grade": grade, "estimate_type": "sales",
+            "estimated_price": round(weighted_median(values, weights), 2), "currency": "EUR",
+            "price_low": min(values), "price_high": max(values), "n_observations": sum(weights),
+            "confidence": "high" if latest_n >= 10 else ("medium" if latest_n >= 3 else "low"),
+            "method": "weighted_median(eBay sold averages via PokemonPriceTracker; weights=sample_size)",
+            "inputs": [{"eur": float(o.price_eur), "n": o.sample_size, "observed_at": o.observed_at.isoformat()}
+                       for o in obs],
+            "is_synthetic": False,
+        })
+    return out
+
+
 def run(stats) -> dict:
     now = datetime.now(timezone.utc)
     with engine().begin() as conn:
         refs = reference_estimates(conn, now)
         lists, outliers = listing_estimates(conn, now)
-        for e in refs + lists:
+        sales = sales_estimates(conn)
+        for e in refs + lists + sales:
             conn.execute(text("""
                 insert into price_estimates (card_id, finish, grade, estimate_type, estimated_price, currency,
                     price_low, price_high, n_observations, confidence, method, inputs, is_synthetic, calculated_at)
                 values (:card_id, :finish, :grade, :estimate_type, :estimated_price, :currency,
                     :price_low, :price_high, :n_observations, :confidence, :method, cast(:inputs as jsonb),
                     :is_synthetic, :now)"""), {**e, "inputs": json.dumps(e["inputs"]), "now": now})
-    stats.rows_out = len(refs) + len(lists)
+    stats.rows_out = len(refs) + len(lists) + len(sales)
     conf = defaultdict(int)
-    for e in refs + lists:
+    for e in refs + lists + sales:
         conf[f"{e['estimate_type']}:{e['confidence']}"] += 1
-    return {"reference_estimates": len(refs), "listing_estimates": len(lists),
+    return {"reference_estimates": len(refs), "listing_estimates": len(lists), "sales_estimates": len(sales),
             "listing_outliers_removed": outliers, "confidence": dict(conf)}

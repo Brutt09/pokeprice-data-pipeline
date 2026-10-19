@@ -15,11 +15,11 @@ from ingestion.fx import to_eur
 NUMBER_RE = re.compile(r"\b(\d{1,3})\s*/\s*(\d{2,3})\b")
 HASH_NUMBER_RE = re.compile(r"#\s*(\d{1,3})\b")
 GRADE_RE = re.compile(r"\b(psa|bgs|cgc|sgc|beckett|ace)\s*(10|9\.5|9|8\.5|8|7\.5|7|6|5|4|3|2|1)\b")
-REVERSE_RE = re.compile(r"\b(reverse\s*holo|rev\s*holo|reverse\s*foil|rh)\b")
+REVERSE_RE = re.compile(r"\b(reverse\s*holo|rev\s*holo|reverse\s*foil|mirror\s*holo|mirror|rh)\b")  # mirror = JP term
 HOLO_RE = re.compile(r"\bholo\b")
 JAPANESE_RE = re.compile(r"\b(japanese|jpn|jp|sv2a|japan)\b")
 
-# Listings that are not a single English card of the catalogue.
+# Listings that are not a single card of the catalogue.
 EXCLUDE_PATTERNS = {
     # "pack fresh" describes a single card's condition, not sealed product
     "sealed_product": re.compile(r"\b(booster|pack(?!\s*fresh)|packs|bundle|etb|elite trainer|upc|"
@@ -52,10 +52,8 @@ def parse_title(title: str) -> dict:
         grade = f"{GRADE_COMPANY[m.group(1)]} {m.group(2)}"
     finish = "reverse" if REVERSE_RE.search(t) else ("holo" if HOLO_RE.search(t) else None)
     flags = [name for name, rx in EXCLUDE_PATTERNS.items() if rx.search(t)]
-    language = "en"
-    if JAPANESE_RE.search(t):
-        language = "ja"
-        flags.append("non_english")
+    # Japanese prints are their own products in the catalogue: routed, not excluded.
+    language = "ja" if JAPANESE_RE.search(t) else "en"
     return {"title_clean": t, "parsed_number": number, "parsed_set_total": set_total,
             "parsed_grade": grade, "parsed_finish": finish, "parsed_language": language,
             "flags": flags, "is_excluded": bool(flags)}

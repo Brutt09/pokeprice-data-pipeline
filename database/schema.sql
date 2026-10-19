@@ -70,6 +70,16 @@ create table if not exists card_variants (
 );
 create index if not exists ix_variants_card on card_variants (card_id, finish);
 
+-- Same card printed in another language/set (e.g. JP sv2a-201 <-> EN sv03.5-199).
+-- Equivalents are linked, never merged: they are different products with different prices.
+create table if not exists card_equivalents (
+    card_id             text not null references cards (card_id),
+    equivalent_card_id  text not null references cards (card_id),
+    method              text not null,               -- name+rarity, name_only, ...
+    created_at          timestamptz not null default now(),
+    primary key (card_id, equivalent_card_id)
+);
+
 -- ---------- reference prices ----------
 -- Product key = (card_id, finish, grade). Reference prices are for raw (ungraded) cards.
 create table if not exists price_observations (
@@ -84,10 +94,12 @@ create table if not exists price_observations (
     currency     text not null,
     price_eur    numeric(12, 2) not null,
     observed_at  timestamptz not null,           -- when the source computed the price
+    sample_size  integer,                        -- number of sales behind a sold average, if known
     ingested_at  timestamptz not null default now(),
     unique (source, card_id, finish, grade, variant_id, price_type, observed_at)
 );
 create index if not exists ix_obs_product on price_observations (card_id, finish, grade, observed_at desc);
+alter table price_observations add column if not exists sample_size integer;   -- for DBs created before it existed
 
 -- ---------- marketplace listings ----------
 create table if not exists listings (

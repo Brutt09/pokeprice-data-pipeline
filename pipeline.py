@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 from common.config import ROOT
 from common.db import apply_schema, pipeline_run, record_skip
-from ingestion import ebay, fx, pokemon_prices, synthetic_listings, tcgdex
+from ingestion import bulbapedia, ebay, fx, pokemon_prices, pokepricetracker, synthetic_listings, tcgdex
 from pricing import estimator
 from transformation import matching, normalize, validation
 
@@ -33,6 +33,13 @@ def staged(job_name, fn):
     return wrapper
 
 
+def sold_stage():
+    if pokepricetracker.credentials_present():
+        return staged("ingest_pokepricetracker_sold", pokepricetracker.run)()
+    record_skip("ingest_pokepricetracker_sold", "POKEPRICETRACKER_API_KEY not set")
+    return {"skipped": "no API key"}
+
+
 def listings_stage():
     if ebay.credentials_present():
         return staged("ingest_ebay", ebay.run)()
@@ -45,6 +52,8 @@ STAGES = [
     ("fx", fx.run, False),
     ("tcgdex", tcgdex.run, True),
     ("pokemontcg", pokemon_prices.run, False),
+    ("bulbapedia", staged("scrape_bulbapedia_jp", bulbapedia.run), False),
+    ("sold", sold_stage, False),
     ("listings", listings_stage, False),
     ("normalize", staged("normalize_listings", normalize.run), True),
     ("match", staged("match_listings", matching.run), True),
@@ -78,7 +87,9 @@ def main(only: str | None = None) -> int:
     summary["runtime_seconds"] = round(time.perf_counter() - started, 2)
     out = ROOT / "data" / "metrics"
     out.mkdir(parents=True, exist_ok=True)
-    (out / "latest_run.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+    # single-stage runs must not overwrite the full-run metrics the README quotes
+    name = "latest_run.json" if only is None else f"latest_stage_{only}.json"
+    (out / name).write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
     print(json.dumps(summary, indent=2, default=str))
     return exit_code
 

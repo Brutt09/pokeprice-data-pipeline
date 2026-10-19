@@ -87,13 +87,37 @@ DISTRACTORS = [
     "Pokemon 151 Booster Bundle 6 packs NEW",
     "Lot of 50 Pokemon 151 cards bulk commons uncommons",
     "{name} {local_id}/{total} PROXY custom card not original",
-    "{name} {local_id}/{total} Japanese SV2a Pokemon Card 151",
     "Pokemon 151 Ultra Premium Collection UPC empty box",
     "{name} Pokemon 151 Choose Your Card",
 ]
 
 
-def generate(cards, ref_prices, rng=None):
+JP_TITLES = [
+    "{grade}{name} {local_id}/{total} Japanese SV2a Pokemon Card 151",
+    "{grade}Pokemon Japanese {name} {local_id}/{total} sv2a {rarity}",
+    "{grade}{name} sv2a {local_id}/{total} JPN NM",
+]
+JP_RARITY_CODES = {"Special illustration rare": "SAR", "Illustration rare": "AR", "Ultra Rare": "SR",
+                   "Hyper rare": "UR", "Double rare": "RR"}
+
+
+def jp_listing(rng, jp, ref_prices):
+    """A listing for a Japanese print. No JP reference price exists yet, so the
+    price is illustrative: the English equivalent's price x 0.8."""
+    en_price = max((ref_prices.get((jp.en_card_id, f), 0) for f in ("normal", "holo", "reverse")), default=0)
+    if not en_price:
+        return None
+    finish = rng.choice(jp.finishes)
+    grade = pick(rng, GRADES)
+    finish_word = rng.choice([" Mirror Holo", " Reverse Holo"]) if finish == "reverse" else ""
+    title = finish_word + " " + rng.choice(JP_TITLES).format(
+        grade=f"{grade} " if grade != "RAW" else "", name=jp.name, local_id=jp.local_id,
+        total=jp.set_official_count, rarity=JP_RARITY_CODES.get(jp.rarity, ""))
+    price = max(en_price * 0.8 * GRADE_MULT[grade], en_price * 0.8 + GRADE_FLOOR[grade])
+    return title.strip(), finish, grade, price * rng.lognormvariate(0.08, 0.15)
+
+
+def generate(cards, ref_prices, rng=None, jp_cards=()):
     rng = rng or random.Random(SEED)
     now = datetime.now(timezone.utc).replace(microsecond=0)
     priced = [c for c in cards if (c.card_id, "normal") in ref_prices or (c.card_id, "holo") in ref_prices
@@ -108,7 +132,12 @@ def generate(cards, ref_prices, rng=None):
         currency = pick(rng, CURRENCIES)
         listed_at = now - timedelta(days=rng.uniform(0, 30))
         seller = f"seller_{rng.randint(1, 120):03d}"
-        if rng.random() < 0.06:
+        jp_card = rng.choice(jp_cards) if jp_cards and rng.random() < 0.06 else None
+        jp = jp_listing(rng, jp_card, ref_prices) if jp_card else None
+        if jp:
+            title, finish, grade, price_eur = jp
+            labels.append((lid, jp_card.card_id, finish, grade, "japanese"))
+        elif rng.random() < 0.05:
             card = rng.choice(priced)
             tpl = rng.choice(DISTRACTORS)
             title = tpl.format(name=card.name, local_id=card.local_id, total=card.set_official_count)
@@ -151,7 +180,16 @@ def run(stats) -> dict:
             join card_variants v on v.variant_id = o.variant_id and not v.is_special
             where o.price_type = 'trend' and o.grade = 'RAW'
             order by o.card_id, o.finish, o.observed_at desc""")).all()}
-        listings, labels = generate(cards, ref_prices)
+        jp_cards = conn.execute(text("""
+            select c.card_id, c.name, c.local_id, c.set_official_count, c.rarity, e.equivalent_card_id as en_card_id,
+                   array_agg(v.finish order by v.finish) as finishes
+            from cards c
+            join card_equivalents e on e.card_id = c.card_id
+            join card_variants v on v.card_id = c.card_id
+            where c.language = 'ja'
+            group by c.card_id, e.equivalent_card_id
+            order by c.card_id""")).all()
+        listings, labels = generate(cards, ref_prices, jp_cards=jp_cards)
         inserted = 0
         for row in listings:
             inserted += conn.execute(text("""

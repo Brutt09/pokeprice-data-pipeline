@@ -73,12 +73,19 @@ with tab_card:
             l = sel.loc["listing"]
             c2.metric("Active-listing estimate (asking)", f"€{l.estimated_price:,.2f}")
             c2.caption(f"Confidence: **{l.confidence}** · {l.n_observations} listings")
-            if l.is_synthetic:
-                c3.warning("**Demo data.** The listing estimate uses SYNTHETIC listings "
-                           "(no eBay keys yet). The reference estimate is real Cardmarket data.")
         else:
             c2.metric("Active-listing estimate", "—")
-        st.caption("Asking prices are not sold prices. Sold-price estimates need a sold-data source.")
+        if "sales" in sel.index:
+            s_ = sel.loc["sales"]
+            c3.metric("Sold-price estimate (eBay sales)", f"€{s_.estimated_price:,.2f}")
+            c3.caption(f"Confidence: **{s_.confidence}** · {s_.n_observations} sales")
+        else:
+            c3.metric("Sold-price estimate", "—")
+            c3.caption("No sold data for this product yet.")
+        if "listing" in sel.index and sel.loc["listing"].is_synthetic:
+            st.warning("**Demo data:** the active-listing estimate uses SYNTHETIC listings. "
+                       "Reference and sold estimates are real data.")
+        st.caption("Asking prices are not sold prices. The three estimates are kept apart on purpose.")
 
     listings = q("""select l.listed_at, l.price_eur, l.title, l.source, l.is_synthetic, m.match_score
                     from card_matches m join listings l using (source, listing_id)

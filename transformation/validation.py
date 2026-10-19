@@ -22,11 +22,14 @@ CHECKS = [
                 where source = 'tcgdex' and endpoint like 'sets/%' order by endpoint, fetched_at desc) r
         ) s where actual < expected"""),
     ("cards_without_reference_price", "price_observations", "warn", """
-        select count(*) from cards c
-        where not exists (select 1 from price_observations o where o.card_id = c.card_id)"""),
+        select count(*) from cards c where c.language = 'en'
+        and not exists (select 1 from price_observations o where o.card_id = c.card_id)"""),
     ("reference_prices_stale", "price_observations", "warn", """
         select case when max(observed_at) < now() - interval '3 days' then 1 else 0 end
         from price_observations"""),
+    ("jp_cards_without_english_link", "card_equivalents", "warn", """
+        select count(*) from cards c where c.language = 'ja'
+        and not exists (select 1 from card_equivalents e where e.card_id = c.card_id)"""),
     ("observations_eur_mismatch", "price_observations", "error",
      "select count(*) from price_observations where currency = 'EUR' and price <> price_eur"),
     ("listings_unknown_currency", "listings", "error", """
