@@ -148,13 +148,22 @@ def listing_estimates(conn, now: datetime) -> tuple[list[dict], int]:
     return out, outliers_total
 
 
+def sales_confidence(n_sales: int, days_since_last_sale: int) -> str:
+    """Thin or stale markets get less confidence, however exact the number looks."""
+    if n_sales >= 10 and days_since_last_sale <= 30:
+        return "high"
+    if n_sales >= 3 and days_since_last_sale <= 90:
+        return "medium"
+    return "low"
+
+
 def sales_estimates(conn) -> list[dict]:
     """Sold-price estimate per (card, finish, grade) from eBay sold averages.
     Snapshots in the window are combined by a median weighted by sample size."""
     rows = conn.execute(text("""
-        select card_id, finish, grade, price_eur, sample_size, observed_at
+        select card_id, finish, grade, price_eur, sample_size, observed_at, last_sale_at
         from price_observations
-        where source = 'ebay_sold_via_ppt' and price_type = 'sold_avg'
+        where source = 'ebay_sold_via_ppt' and price_type = 'sold_median'
           and observed_at >= now() - make_interval(days => :d)"""), {"d": LISTING_WINDOW_DAYS}).all()
     groups = defaultdict(list)
     for r in rows:
@@ -163,15 +172,18 @@ def sales_estimates(conn) -> list[dict]:
     for (card_id, finish, grade), obs in groups.items():
         values = [float(o.price_eur) for o in obs]
         weights = [max(o.sample_size or 1, 1) for o in obs]
-        latest_n = max(obs, key=lambda o: o.observed_at).sample_size or 0
+        latest = max(obs, key=lambda o: o.observed_at)
+        n_sales = latest.sample_size or 0
+        days_since_sale = ((datetime.now(timezone.utc) - latest.last_sale_at).days
+                           if latest.last_sale_at else 9999)
         out.append({
             "card_id": card_id, "finish": finish, "grade": grade, "estimate_type": "sales",
             "estimated_price": round(weighted_median(values, weights), 2), "currency": "EUR",
             "price_low": min(values), "price_high": max(values), "n_observations": sum(weights),
-            "confidence": "high" if latest_n >= 10 else ("medium" if latest_n >= 3 else "low"),
-            "method": "weighted_median(eBay sold averages via PokemonPriceTracker; weights=sample_size)",
-            "inputs": [{"eur": float(o.price_eur), "n": o.sample_size, "observed_at": o.observed_at.isoformat()}
-                       for o in obs],
+            "confidence": sales_confidence(n_sales, days_since_sale),
+            "method": "weighted_median(eBay sold medians per grade via PokemonPriceTracker; weights=sample_size)",
+            "inputs": [{"eur": float(o.price_eur), "n": o.sample_size, "observed_at": o.observed_at.isoformat(),
+                        "last_sale_at": o.last_sale_at.isoformat() if o.last_sale_at else None} for o in obs],
             "is_synthetic": False,
         })
     return out

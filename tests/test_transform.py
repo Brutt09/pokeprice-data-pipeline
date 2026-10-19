@@ -241,7 +241,7 @@ def test_ppt_graded_prices_shape():
 def test_ppt_ebay_sales_list_shape_uses_median_and_count():
     from ingestion.pokepricetracker import parse_graded
     out = parse_graded({"ebay_data": {"psa_10_sales": [{"price": 200.0}, {"price": 210.0}, {"price": 900.0}]}})
-    assert out == [{"grade": "PSA 10", "price_usd": 210.0, "sample_size": 3}]
+    assert out == [{"grade": "PSA 10", "price_usd": 210.0, "sample_size": 3, "last_sale_at": None}]
 
 
 def test_ppt_sold_data_beats_bare_graded_price():
@@ -250,3 +250,27 @@ def test_ppt_sold_data_beats_bare_graded_price():
                         "ebay": {"psa10": {"averagePrice": 300.0, "count": 12}, "cgc9.5": {"avg": 150, "count": 2}}})
     assert sorted((o["grade"], o["price_usd"], o["sample_size"]) for o in out) == \
         [("CGC 9.5", 150.0, 2), ("PSA 10", 300.0, 12)]
+
+
+def test_ppt_real_sales_by_grade_shape():
+    # Shape verified on a real response (2026-10-19); numbers here are made up.
+    from ingestion.pokepricetracker import parse_graded
+    card = {"ebay": {"updatedAt": "2026-10-15T13:35:41.898Z", "salesByGrade": {
+        "psa10": {"count": 6, "medianPrice": 113.9, "averagePrice": 142.3, "lastSaleDate": "2026-08-27T05:56:36.000Z"},
+        "cgc9_5": {"count": 10, "medianPrice": 9.98, "averagePrice": 10.1, "lastSaleDate": "2026-10-01T00:00:00.000Z"},
+        "cgc8_5": {"count": 1, "medianPrice": 8.0, "averagePrice": 8.0, "lastSaleDate": None},
+    }}}
+    out = {o["grade"]: o for o in parse_graded(card)}
+    assert set(out) == {"PSA 10", "CGC 9.5", "CGC 8.5"}
+    assert out["PSA 10"]["price_usd"] == 113.9            # median, not the skewed average
+    assert out["PSA 10"]["sample_size"] == 6
+    assert out["PSA 10"]["last_sale_at"].month == 8
+
+
+def test_sales_confidence_penalises_thin_and_stale_markets():
+    from pricing.estimator import sales_confidence
+    assert sales_confidence(40, 10) == "high"
+    assert sales_confidence(40, 60) == "medium"
+    assert sales_confidence(6, 53) == "medium"
+    assert sales_confidence(2, 5) == "low"
+    assert sales_confidence(50, 200) == "low"

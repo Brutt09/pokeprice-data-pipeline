@@ -94,12 +94,14 @@ create table if not exists price_observations (
     currency     text not null,
     price_eur    numeric(12, 2) not null,
     observed_at  timestamptz not null,           -- when the source computed the price
-    sample_size  integer,                        -- number of sales behind a sold average, if known
+    sample_size  integer,                        -- number of sales behind a sold median, if known
+    last_sale_at timestamptz,                    -- most recent sale behind it (staleness)
     ingested_at  timestamptz not null default now(),
     unique (source, card_id, finish, grade, variant_id, price_type, observed_at)
 );
 create index if not exists ix_obs_product on price_observations (card_id, finish, grade, observed_at desc);
 alter table price_observations add column if not exists sample_size integer;   -- for DBs created before it existed
+alter table price_observations add column if not exists last_sale_at timestamptz;
 
 -- ---------- marketplace listings ----------
 create table if not exists listings (

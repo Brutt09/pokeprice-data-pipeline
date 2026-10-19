@@ -12,9 +12,12 @@ Terms (reviewed 2026-10-19): hobby/non-revenue use and storing data in our own
 DB are allowed; redistributing the raw data is not. So this data never goes
 into the git repo or a public deployment.
 
-NOTE: the docs show two different response shapes for eBay data. The parser
-handles both documented shapes and keeps every raw payload. Verify against the
-first real response and tighten the parser (see tests).
+Response shape (verified on a real response, 2026-10-19):
+  data.ebay.updatedAt, data.ebay.salesByGrade.<psa10|cgc9_5|...>.
+      {count, medianPrice, averagePrice, minPrice, maxPrice, lastSaleDate, ...}
+  metadata.apiCallsConsumed.total  -> credits actually charged
+We use the MEDIAN (one high sale skews the average) and keep count + last sale
+date so the estimator can lower confidence for thin or stale markets.
 
 Run:  python -m ingestion.pokepricetracker
 """
@@ -37,9 +40,9 @@ SOURCE = "ebay_sold_via_ppt"
 BASE_URL = "https://www.pokemonpricetracker.com/api/v2"
 CREDITS_PER_CARD = 2          # 1 card + 1 for includeEbay
 
-GRADE_KEY_RE = re.compile(r"^(psa|cgc|bgs|sgc|beckett|ace)[\s_-]?(10|9\.5|9_5|9|8\.5|8|7|6|5|4|3|2|1)$", re.I)
+GRADE_KEY_RE = re.compile(r"^(psa|cgc|bgs|sgc|beckett|ace)[\s_-]?(10|\d(?:[._]5)?)$", re.I)
 COMPANY = {"psa": "PSA", "cgc": "CGC", "bgs": "BGS", "beckett": "BGS", "sgc": "SGC", "ace": "ACE"}
-PRICE_KEYS = ("averagePrice", "avgPrice", "average", "avg", "price", "marketPrice", "median")
+PRICE_KEYS = ("medianPrice", "median", "averagePrice", "avgPrice", "average", "avg", "price", "marketPrice")
 COUNT_KEYS = ("count", "salesCount", "totalSales", "sales", "n")
 
 
@@ -58,8 +61,13 @@ def _number(v):
     return float(v) if isinstance(v, (int, float)) and v > 0 else None
 
 
+def _ts(value):
+    return datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else None
+
+
 def parse_graded(card: dict) -> list[dict]:
-    """Return [{grade, price_usd, sample_size}] from either documented shape:
+    """Return [{grade, price_usd, sample_size, last_sale_at}]. Real shape is
+    ebay.salesByGrade (see module doc); older documented shapes are also accepted:
       gradedPrices: {"psa10": 15750.0, ...}
       ebay(_data):  {"psa10": {"averagePrice": .., "count": ..}} or {"psa_10_sales": [{"price": ..}, ...]}
     """
@@ -67,16 +75,18 @@ def parse_graded(card: dict) -> list[dict]:
     for key, value in (card.get("gradedPrices") or {}).items():
         grade = grade_from_key(key)
         if grade and _number(value):
-            out.append({"grade": grade, "price_usd": float(value), "sample_size": None})
+            out.append({"grade": grade, "price_usd": float(value), "sample_size": None, "last_sale_at": None})
     ebay = card.get("ebay") or card.get("ebay_data") or {}
     blocks = ebay.get("salesByGrade") or ebay
     for key, value in (blocks.items() if isinstance(blocks, dict) else []):
         grade = grade_from_key(key)
         if not grade:
             continue
+        last_sale = None
         if isinstance(value, dict):
             price = next((_number(value.get(k)) for k in PRICE_KEYS if _number(value.get(k))), None)
             count = next((int(value[k]) for k in COUNT_KEYS if isinstance(value.get(k), int)), None)
+            last_sale = _ts(value.get("lastSaleDate"))
         elif isinstance(value, list):        # list of individual sales
             prices = [p for p in (_number(s.get("price")) for s in value if isinstance(s, dict)) if p]
             prices.sort()
@@ -85,7 +95,7 @@ def parse_graded(card: dict) -> list[dict]:
         else:
             continue
         if price:
-            out.append({"grade": grade, "price_usd": price, "sample_size": count})
+            out.append({"grade": grade, "price_usd": price, "sample_size": count, "last_sale_at": last_sale})
     # keep the entry with the largest sample per grade (sold data beats a bare graded price)
     best: dict[str, dict] = {}
     for o in out:
@@ -117,8 +127,8 @@ def _candidates(conn) -> list:
         order by v.tcgplayer_id, v.finish"""), {"src": SOURCE}).all()
 
 
-async def fetch(tcgplayer_ids: list[int]) -> dict[int, dict | Exception]:
-    results = {}
+async def fetch(tcgplayer_ids: list[int]) -> tuple[dict[int, dict | Exception], int]:
+    results, credits = {}, 0
     headers = {"Authorization": f"Bearer {API_KEY}"}
     async with httpx.AsyncClient(timeout=30, headers=headers) as client:
         for tid in tcgplayer_ids:            # sequential: well under the 60 req/min limit
@@ -127,16 +137,17 @@ async def fetch(tcgplayer_ids: list[int]) -> dict[int, dict | Exception]:
                                      params={"tcgPlayerId": str(tid), "includeEbay": "true"})
                 save_raw("pokepricetracker", f"cards?tcgPlayerId={tid}&includeEbay=true", doc)
                 results[tid] = doc.get("data", doc) if isinstance(doc, dict) else doc
+                credits += int((((doc.get("metadata") or {}).get("apiCallsConsumed") or {}).get("total")) or 0)
             except Exception as exc:
                 results[tid] = exc
-    return results
+    return results, credits
 
 
 def run(stats) -> dict:
     n_cards = DAILY_CREDIT_BUDGET // CREDITS_PER_CARD
     with engine().connect() as conn:
         targets = cards_to_fetch(conn, n_cards)
-    fetched = asyncio.run(fetch([t.tcgplayer_id for t in targets]))
+    fetched, credits_used = asyncio.run(fetch([t.tcgplayer_id for t in targets]))
     now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     inserted = failed = no_graded = 0
     with engine().begin() as conn:
@@ -147,20 +158,23 @@ def run(stats) -> dict:
                 continue
             card = card[0] if isinstance(card, list) and card else card
             graded = parse_graded(card) if isinstance(card, dict) else []
+            # snapshot time = when the source last recomputed eBay stats (hour-snapped for idempotency)
+            snap = _ts(((card.get("ebay") or {}) if isinstance(card, dict) else {}).get("updatedAt"))
+            observed = snap.replace(minute=0, second=0, microsecond=0) if snap else now
             if not graded:
                 no_graded += 1
             for g in graded:
-                price_eur = to_eur(conn, g["price_usd"], "USD", now.date())
+                price_eur = to_eur(conn, g["price_usd"], "USD", observed.date())
                 if price_eur is None:
                     continue
                 inserted += conn.execute(text("""
                     insert into price_observations (card_id, finish, grade, source, price_type, price,
-                                                    currency, price_eur, observed_at, sample_size)
-                    values (:c, :f, :g, :src, 'sold_avg', :p, 'USD', :pe, :o, :n)
+                                                    currency, price_eur, observed_at, sample_size, last_sale_at)
+                    values (:c, :f, :g, :src, 'sold_median', :p, 'USD', :pe, :o, :n, :ls)
                     on conflict do nothing"""),
                     {"c": t.card_id, "f": t.finish, "g": g["grade"], "src": SOURCE, "p": g["price_usd"],
-                     "pe": price_eur, "o": now, "n": g["sample_size"]}).rowcount
+                     "pe": price_eur, "o": observed, "n": g["sample_size"], "ls": g["last_sale_at"]}).rowcount
     stats.rows_in = len(targets)
     stats.rows_out = inserted
-    return {"cards_requested": len(targets), "credits_used_est": len(targets) * CREDITS_PER_CARD,
+    return {"cards_requested": len(targets), "credits_used": credits_used,
             "failed": failed, "cards_without_graded_data": no_graded, "observations_new": inserted}

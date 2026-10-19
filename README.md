@@ -70,9 +70,10 @@ All numbers below come from `data/metrics/latest_run.json` and the database. Not
 | Full pipeline runtime | **≈ 50 s** end to end (Bulbapedia's 5 s crawl delay included) |
 | Idempotency | Two back-to-back runs → identical row counts |
 | Data-quality checks | **12 / 12 passing** (4 error-level, 8 warning-level) |
-| Unit tests | 36 passing |
+| Unit tests | 38 passing |
 | Reference estimates | 360 products. 186 are low confidence, and 168 of those are cards under €1, where the sources disagree a lot in relative terms. |
-| Sold-price (sales) estimates | 0 so far. The connector is built and tested on the documented response shapes, and is waiting for an API key. |
+| Sold-price (sales) estimates | **717** card × grade products across 45 cards (first daily batch: 90 credits, 0 failures). Grades: PSA 8–10, CGC 8–10 incl. half grades. 226 high / 169 medium / 322 low confidence. Confidence falls when sales are few or the last sale is old. |
+| Graded premium | Median **PSA 10 sold ÷ raw reference = 5.3×** (35 cards with high-confidence sales). Example: Charizard ex 199, €1,289 PSA 10 (594 sales) vs €328 raw. |
 | TCGplayer vs Cardmarket | Median TCGplayer *market* price is **1.24×** the Cardmarket *trend* price after FX (360 product pairs). This is why the two sources are kept apart and combined only by a weighted median. |
 
 **Matching, measured on the synthetic labelled benchmark.** Read the caveat below.
@@ -93,8 +94,9 @@ All numbers below come from `data/metrics/latest_run.json` and the database. Not
 1. **Wrong entity key.** TCGdex `variantId` looked like a per-card id, but it identifies a variant *type* and repeats across cards. The catalogue collapsed from 207 cards to 8, and matching precision measured 4%. The fix scopes the key to the card, and a regression test covers it.
 2. **Missing FX history.** With only today's FX rate, 486 of 800 listings couldn't be converted to EUR. The fix backfills the ECB time series for 45 days.
 3. **Re-runs duplicated data.** TCGdex returns the same daily price snapshot with millisecond jitter between requests, so a second run added 1,812 duplicate observations. The fix snaps the snapshot time to the hour, and a regression test covers it.
-4. **Language silently defaulted.** The matcher's query left out the language column, so all 47 Japanese listings matched English prints (0/47). The new per-noise-type metric exposed it immediately.
-5. **Short-name collision.** The card "Mew ex" matched inside titles using the set alias "MEW". The fix makes the most specific name win a tie.
+4. **Sold data: average vs median.** On the first real response, a PSA 10 had an average of $142 but a median of $114, because one $216 sale skewed the average. The pipeline now uses the median. Half grades (`cgc8_5`) were also being dropped; they're now parsed.
+5. **Language silently defaulted.** The matcher's query left out the language column, so all 47 Japanese listings matched English prints (0/47). The new per-noise-type metric exposed it immediately.
+6. **Short-name collision.** The card "Mew ex" matched inside titles using the set alias "MEW". The fix makes the most specific name win a tie.
 
 ## Run it
 
@@ -140,7 +142,6 @@ Pokémon and card names are trademarks of Nintendo / The Pokémon Company. This 
 
 ## Next steps
 
-- Add the PriceTracker key and verify the sold-data parser on real responses.
 - Add eBay keys (access pending), run on real titles, and hand-label about 200 of them to get real precision and recall.
 - Anomaly detection for **manipulated** prices: shill-bid patterns, sudden spikes against history, single-seller dominance.
 - A buyback-price tool (estimate × margin rules by confidence) for inventory decisions.
