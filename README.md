@@ -2,6 +2,8 @@
 
 An end-to-end data-engineering pipeline. It ingests Pokémon card catalogue data, reference prices and graded **sold** prices from public APIs, scrapes Japanese set lists with browser automation, standardises messy marketplace listings, matches them to the right card, finish and grade, checks data quality, and produces **explainable** price estimates. The results are served through an API and a small dashboard.
 
+**Objective:** a data-engineering project for collectibles pricing. It builds a reliable, structured source of trading-card prices from messy, inconsistent market data.
+
 `Python` · `PostgreSQL` · `SQL` · `HTTPX (async)` · `Playwright` · `RapidFuzz` · `FastAPI` · `Streamlit` · `pytest` · `Docker Compose`
 
 ---
