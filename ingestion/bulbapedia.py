@@ -74,16 +74,16 @@ def jp_finishes(rarity_code: str, en_finishes: list[str] | None) -> list[str]:
 
 
 def link_equivalent(jp: dict, en_cards: list) -> tuple[str | None, str]:
-    """Pick the English print of the same card: same name and rarity; ties broken by nearest number."""
+    """Pick the English print of the same card: same name AND same rarity; ties broken
+    by nearest number. A same-name card of another rarity is different artwork (e.g. JP
+    Snorlax illustration rare vs EN Snorlax uncommon), so it is NOT an equivalent: such
+    JP-exclusive prints stay unlinked."""
     same_name = [c for c in en_cards if clean_title(c.name) == clean_title(jp["name"])]
-    same_rarity = [c for c in same_name if c.rarity == jp["rarity"]]
-    pool, method = (same_rarity, "name+rarity") if same_rarity else (same_name, "name_only")
+    pool = [c for c in same_name if c.rarity == jp["rarity"]]
     if not pool:
-        return None, "unlinked"
-    if len(pool) > 1:
-        method += "+nearest_number"
+        return None, "jp_exclusive" if same_name else "unlinked"
     best = min(pool, key=lambda c: abs(c.collector_number - jp["number"]))
-    return best.card_id, method
+    return best.card_id, "name+rarity" + ("+nearest_number" if len(pool) > 1 else "")
 
 
 def scrape(spec: dict) -> list[dict]:
@@ -104,9 +104,10 @@ def run(stats) -> dict:
     for spec in JP_SETS:
         cards = scrape(spec)
         stats.rows_in += len(cards)
-        links = {"name+rarity": 0, "name+rarity+nearest_number": 0, "name_only": 0,
-                 "name_only+nearest_number": 0, "unlinked": 0}
+        links = {"name+rarity": 0, "name+rarity+nearest_number": 0, "jp_exclusive": 0, "unlinked": 0}
         with engine().begin() as conn:
+            # links are rebuilt every run, so a corrected rule also removes old wrong links
+            conn.execute(text("delete from card_equivalents where card_id like :p"), {"p": f"{spec['set_id']}-%"})
             en_cards = conn.execute(text("""
                 select c.card_id, c.name, c.rarity, c.collector_number,
                        array_agg(distinct v.finish) filter (where not v.is_special) as finishes

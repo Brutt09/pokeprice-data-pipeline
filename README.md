@@ -69,13 +69,15 @@ All numbers below come from `data/metrics/latest_run.json` and the database. Not
 | Metric | Value |
 |---|---|
 | Cards ingested | **207 / 207** English (100% success) + **210** Japanese scraped |
-| JP → EN links | **210 / 210** linked: 205 by exact name + rarity, 5 by name with a number tie-break |
+| JP → EN links | **207** linked by exact name + rarity (2 with a card-number tie-break). **3** are Japanese-exclusive prints with no English card of the same rarity, so they're left unlinked on purpose. |
 | Printed variants | 384 (special stamped/foil versions flagged, kept out of base prices) |
 | Reference price observations | 3,384 (2,304 Cardmarket + 1,080 TCGplayer) |
 | Full pipeline runtime | **≈ 50 s** end to end (Bulbapedia's 5 s crawl delay included) |
 | Idempotency | Two back-to-back runs → identical row counts |
 | Data-quality checks | **14 / 14 passing** (6 error-level, 8 warning-level) |
-| Tests | **60 passing**: 57 unit + 3 PostgreSQL integration tests (run in CI on every push) |
+| Tests | **61 passing**: 58 unit + 3 PostgreSQL integration tests (run in CI on every push) |
+| Data audit | `python -m ops.data_audit` profiles every table (missing values, ranges, top values) and runs 14 targeted probes for odd data. Latest: 13 clean, 1 market insight (below). |
+| Low grades can be worth less than raw | 15 graded products with 10+ sales sell **below** the ungraded near-mint price. E.g. Zapdos ex SIR PSA 8: €68 vs €112 raw (92 sales). A PSA 8 shows a flaw, while a raw card could still be a 10. |
 | Suspicious prices | **16** open anomalies; **7 errors, all Gengar 094**: at every grade its graded premium over raw (2.8–84×) is far above what other cards show (0.7–5.4×), and the card has a *galaxy-foil* print worth €45.81 vs €2.61 for the base. The sold data very likely mixes the two (`variant_pooling`). |
 | Buyback decisions | **1,077** products priced: **450** automatic offers, **340** to human review (low confidence or flagged), **287** bulk (< €2). E.g. Charizard ex 199 PSA 10: market €1,289 (594 sales) → offer **€966**; Gengar PSA 10 → *manual review*. |
 | Monitoring in practice | The Pokémon TCG API returned HTTP 502 during the final run; the pipeline continued and the alert stage reported the failed stage. |
@@ -104,8 +106,9 @@ All numbers below come from `data/metrics/latest_run.json` and the database. Not
 3. **Re-runs duplicated data.** TCGdex returns the same daily price snapshot with millisecond jitter between requests, so a second run added 1,812 duplicate observations. The fix snaps the snapshot time to the hour, and a regression test covers it.
 4. **Sold data: average vs median.** On the first real response, a PSA 10 had an average of $142 but a median of $114, because one $216 sale skewed the average. The pipeline now uses the median. Half grades (`cgc8_5`) were also being dropped; they're now parsed.
 5. **Language silently defaulted.** The matcher's query left out the language column, so all 47 Japanese listings matched English prints (0/47). The new per-noise-type metric exposed it immediately.
-6. **A detector that flagged everything.** The first variant-pooling detector raised 21 errors, mostly cheap commons. A €0.14 card in a PSA slab sells for €8+ because of grading fees, so premium ratios mean nothing there. Restricting peers to cards worth ≥ €2 left 7 errors, all on the one card (Gengar) with a real explanation.
-7. **Short-name collision.** The card "Mew ex" matched inside titles using the set alias "MEW". The fix makes the most specific name win a tie.
+6. **Wrong cross-language links (found by the data audit).** Japanese *Snorlax* (illustration rare) had been linked to English *Snorlax* (uncommon): same name, different artwork, different product. 3 links came from a "name only" fallback. Links now require the same name **and** rarity, and they're rebuilt every run.
+7. **A detector that flagged everything.** The first variant-pooling detector raised 21 errors, mostly cheap commons. A €0.14 card in a PSA slab sells for €8+ because of grading fees, so premium ratios mean nothing there. Restricting peers to cards worth ≥ €2 left 7 errors, all on the one card (Gengar) with a real explanation.
+8. **Short-name collision.** The card "Mew ex" matched inside titles using the set alias "MEW". The fix makes the most specific name win a tie.
 
 ## Run it
 

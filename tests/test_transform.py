@@ -220,6 +220,13 @@ def test_jp_card_links_to_english_print_by_name_and_rarity():
     assert link_equivalent({"name": "Mewtwo", "rarity": "Rare", "number": 150}, en) == (None, "unlinked")
 
 
+def test_same_name_different_rarity_is_not_an_equivalent():
+    # Regression (found by the data audit): JP Snorlax illustration rare was linked to EN Snorlax uncommon.
+    from ingestion.bulbapedia import link_equivalent
+    en = [SimpleNamespace(card_id="sv03.5-143", name="Snorlax", rarity="Uncommon", collector_number=143)]
+    assert link_equivalent({"name": "Snorlax", "rarity": "Illustration rare", "number": 181}, en) ==         (None, "jp_exclusive")
+
+
 def test_scraper_refuses_sites_without_reviewed_terms():
     from ingestion.scraper import PoliteScraper, ScrapeNotAllowed
     with pytest.raises(ScrapeNotAllowed):

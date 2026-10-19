@@ -27,9 +27,12 @@ CHECKS = [
     ("reference_prices_stale", "price_observations", "warn", """
         select case when max(observed_at) < now() - interval '3 days' then 1 else 0 end
         from price_observations"""),
-    ("jp_cards_without_english_link", "card_equivalents", "warn", """
-        select count(*) from cards c where c.language = 'ja'
-        and not exists (select 1 from card_equivalents e where e.card_id = c.card_id)"""),
+    # JP-exclusive prints (no English card with the same name AND rarity) are legitimately unlinked
+    ("jp_cards_missing_english_link", "card_equivalents", "warn", """
+        select count(*) from cards jp where jp.language = 'ja'
+        and not exists (select 1 from card_equivalents e where e.card_id = jp.card_id)
+        and exists (select 1 from cards en where en.language = 'en'
+                    and lower(en.name) = lower(jp.name) and en.rarity = jp.rarity)"""),
     ("auto_offer_on_flagged_price", "buyback_quotes", "error", """
         select count(*) from v_latest_quotes q
         where q.decision = 'auto' and exists (
