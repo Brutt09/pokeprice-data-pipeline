@@ -10,3 +10,4 @@ data/metrics/
 # private planning notes (kept local)
 PROJECT.md
 CLAUDE.md
+.ipynb_checkpoints/

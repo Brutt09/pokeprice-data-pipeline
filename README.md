@@ -113,6 +113,8 @@ powershell -File scripts\dev_db.ps1          # project-local Postgres on :5433
 powershell -File scripts\schedule_windows.ps1 # optional: daily 09:00 run
 ```
 
+**Notebook walkthrough:** `.venv\Scripts\jupyter lab notebooks\pokeprice_walkthrough.ipynb` (kernel *Python 3 (pokeprice)*). It runs the pipeline, then explores pipeline health, the EN/JP catalogue, price-guide agreement, matching accuracy, graded sold-price ladders and the PSA 10 premium, plus a `card_report("Charizard ex")` lookup. Outputs are stripped on commit (`nbstripout`), so no licensed price data reaches git.
+
 **With Docker:** `docker compose up --build` starts Postgres, the pipeline (runs now and then daily), the API and the dashboard.
 
 Run a single stage with `python pipeline.py --stage match`. The stages are fx, tcgdex, pokemontcg, listings, normalize, match, estimate and validate.

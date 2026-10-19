@@ -9,3 +9,7 @@ uvicorn==0.54.0
 streamlit==1.66.0
 pytest==9.1.1
 playwright==1.64.0
+jupyterlab==4.6.4
+ipykernel==7.4.0
+matplotlib==3.11.2
+nbstripout==0.9.1
