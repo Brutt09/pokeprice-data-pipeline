@@ -22,7 +22,7 @@ from ingestion.http import save_raw
 
 log = logging.getLogger(__name__)
 
-USER_AGENT = "pokeprice-pipeline/0.1 (portfolio data-engineering project; +https://github.com/)"
+USER_AGENT = "pokeprice-pipeline/0.1 (portfolio data-engineering project; +https://github.com/Brutt09/pokeprice-data-pipeline)"
 
 ALLOWED_SITES = {
     "bulbapedia.bulbagarden.net": {
