@@ -11,3 +11,6 @@ data/metrics/
 PROJECT.md
 CLAUDE.md
 .ipynb_checkpoints/
+
+# local notebook copy with results (licensed price data)
+/pokeprice_walkthrough.ipynb
