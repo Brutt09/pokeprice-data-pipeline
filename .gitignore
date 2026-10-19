@@ -6,3 +6,7 @@ __pycache__/
 data/raw/
 data/metrics/
 *.log
+
+# private planning notes (kept local)
+PROJECT.md
+CLAUDE.md
