@@ -18,7 +18,8 @@ from datetime import datetime, timezone
 from common.config import ROOT
 from common.db import apply_schema, pipeline_run, record_skip
 from ingestion import bulbapedia, ebay, fx, pokemon_prices, pokepricetracker, synthetic_listings, tcgdex
-from pricing import estimator
+from ops import alerts
+from pricing import anomalies, buyback, estimator
 from transformation import matching, normalize, validation
 
 log = logging.getLogger("pipeline")
@@ -58,7 +59,10 @@ STAGES = [
     ("normalize", staged("normalize_listings", normalize.run), True),
     ("match", staged("match_listings", matching.run), True),
     ("estimate", staged("estimate_prices", estimator.run), True),
+    ("anomalies", staged("detect_anomalies", anomalies.run), True),
+    ("buyback", staged("buyback_quotes", buyback.run), True),
     ("validate", staged("data_quality", validation.run), True),
+    ("alerts", staged("send_alerts", alerts.run), False),
 ]
 
 

@@ -30,6 +30,14 @@ CHECKS = [
     ("jp_cards_without_english_link", "card_equivalents", "warn", """
         select count(*) from cards c where c.language = 'ja'
         and not exists (select 1 from card_equivalents e where e.card_id = c.card_id)"""),
+    ("auto_offer_on_flagged_price", "buyback_quotes", "error", """
+        select count(*) from v_latest_quotes q
+        where q.decision = 'auto' and exists (
+            select 1 from v_open_anomalies a where a.severity = 'error'
+            and (a.card_id, a.finish, a.grade) = (q.card_id, q.finish, q.grade))"""),
+    ("auto_offer_not_below_market", "buyback_quotes", "error", """
+        select count(*) from v_latest_quotes
+        where decision = 'auto' and (offer is null or offer >= market_value or offer <= 0)"""),
     ("observations_eur_mismatch", "price_observations", "error",
      "select count(*) from price_observations where currency = 'EUR' and price <> price_eur"),
     ("listings_unknown_currency", "listings", "error", """

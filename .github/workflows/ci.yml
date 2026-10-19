@@ -1,0 +1,31 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.6
+        env:
+          POSTGRES_USER: pokeprice
+          POSTGRES_PASSWORD: pokeprice
+          POSTGRES_DB: pokeprice_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pokeprice"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://pokeprice:pokeprice@localhost:5432/pokeprice_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Unit + database integration tests (no network)
+        run: python -m pytest -q

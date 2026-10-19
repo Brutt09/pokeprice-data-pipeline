@@ -74,6 +74,35 @@ def get_listings(card_id: str, limit: int = Query(100, le=1000)):
                    order by l.listed_at desc nulls last limit :limit""", c=card_id, limit=limit)
 
 
+@app.get("/cards/{card_id}/market-value")
+def get_market_value(card_id: str, grade: str | None = None):
+    """One market value per product, the evidence it came from, and the buyback decision."""
+    return rows("""select card_id, finish, grade, market_value, basis, confidence, decision, offer,
+                          reasons, policy_version, quoted_at
+                   from v_latest_quotes where card_id = :c and (cast(:g as text) is null or grade = :g)
+                   order by finish, grade""", c=card_id, g=grade)
+
+
+@app.get("/buyback/quote")
+def buyback_quote(card_id: str, finish: str, grade: str = "RAW"):
+    """What we would pay a customer for this exact product, or why we won't quote automatically."""
+    q = rows("""select * from v_latest_quotes where card_id = :c and finish = :f and grade = :g""",
+             c=card_id, f=finish, g=grade)
+    if not q:
+        raise HTTPException(404, "no market value for this product yet")
+    return q[0]
+
+
+@app.get("/anomalies")
+def open_anomalies(severity: str | None = None, limit: int = Query(100, le=1000)):
+    """Suspicious prices from the latest detection run."""
+    return rows("""select a.card_id, c.name, a.finish, a.grade, a.anomaly_type, a.severity,
+                          a.observed_value, a.expected_value, a.details, a.detected_at
+                   from v_open_anomalies a join cards c using (card_id)
+                   where cast(:s as text) is null or a.severity = :s
+                   order by a.severity, c.name, a.grade limit :limit""", s=severity, limit=limit)
+
+
 @app.get("/matches/review")
 def review_queue(limit: int = Query(100, le=1000)):
     """Listings the matcher was not sure about — the human-in-the-loop queue."""

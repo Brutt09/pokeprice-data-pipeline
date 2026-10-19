@@ -87,6 +87,25 @@ with tab_card:
                        "Reference and sold estimates are real data.")
         st.caption("Asking prices are not sold prices. The three estimates are kept apart on purpose.")
 
+        quote = q("""select market_value, basis, confidence, decision, offer, reasons
+                     from v_latest_quotes where card_id = :c and finish = :f and grade = :g""",
+                  c=card_id, f=finish, g=grade)
+        flags = q("""select anomaly_type, severity, observed_value, expected_value from v_open_anomalies
+                     where card_id = :c and finish = :f and grade = :g""", c=card_id, f=finish, g=grade)
+        if not quote.empty:
+            qt = quote.iloc[0]
+            m1, m2 = st.columns(2)
+            m1.metric("Market value (used for decisions)", f"€{qt.market_value:,.2f}")
+            m1.caption(f"From **{qt.basis}** · confidence **{qt.confidence}**")
+            label = {"auto": "Buyback offer", "manual_review": "Buyback: needs a human",
+                     "bulk": "Buyback: bulk"}[qt.decision]
+            m2.metric(label, f"€{qt.offer:,.2f}" if qt.offer == qt.offer and qt.offer else "—")
+            m2.caption(" · ".join(qt.reasons[1:]))
+        for f in flags.itertuples():
+            (st.error if f.severity == "error" else st.warning)(
+                f"⚠ **{f.anomaly_type.replace('_', ' ')}**: observed €{f.observed_value:,.2f}, "
+                f"typical about €{f.expected_value:,.2f}")
+
     listings = q("""select l.listed_at, l.price_eur, l.title, l.source, l.is_synthetic, m.match_score
                     from card_matches m join listings l using (source, listing_id)
                     where m.card_id = :c and m.finish = :f and m.grade = :g and m.status = 'auto'

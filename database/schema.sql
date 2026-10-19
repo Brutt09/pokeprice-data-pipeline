@@ -192,3 +192,50 @@ create or replace view v_latest_estimates as
 select distinct on (card_id, finish, grade, estimate_type) *
 from price_estimates
 order by card_id, finish, grade, estimate_type, calculated_at desc;
+
+-- ---------- anomalies ----------
+-- One batch of findings per detection run; the latest batch is what is "open".
+create table if not exists anomaly_runs (
+    detected_at  timestamptz primary key,
+    n_found      integer not null
+);
+
+create table if not exists price_anomalies (
+    anomaly_id      bigserial primary key,
+    card_id         text not null references cards (card_id),
+    finish          text,
+    grade           text,
+    anomaly_type    text not null,
+    severity        text not null check (severity in ('error', 'warn')),
+    observed_value  numeric(12, 2),
+    expected_value  numeric(12, 2),
+    details         jsonb,
+    detected_at     timestamptz not null
+);
+create index if not exists ix_anomalies_product on price_anomalies (card_id, finish, grade, detected_at desc);
+
+create or replace view v_open_anomalies as
+select a.* from price_anomalies a
+where a.detected_at = (select max(detected_at) from anomaly_runs);
+
+-- ---------- decisions ----------
+create table if not exists buyback_quotes (
+    quote_id        bigserial primary key,
+    card_id         text not null references cards (card_id),
+    finish          text not null,
+    grade           text not null,
+    market_value    numeric(12, 2) not null,
+    basis           text not null,                -- sales | reference | listing_discounted
+    confidence      text not null,
+    decision        text not null check (decision in ('auto', 'manual_review', 'bulk')),
+    offer           numeric(12, 2),               -- null unless decision = 'auto'
+    reasons         jsonb not null,
+    policy_version  text not null,
+    quoted_at       timestamptz not null
+);
+create index if not exists ix_quotes_product on buyback_quotes (card_id, finish, grade, quoted_at desc);
+
+create or replace view v_latest_quotes as
+select distinct on (card_id, finish, grade) *
+from buyback_quotes
+order by card_id, finish, grade, quoted_at desc;
