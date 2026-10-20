@@ -162,8 +162,9 @@ with tab_card:
                       "Ungraded from": found.raw_value.map(euro), "PSA 10": found.psa10_value.map(euro),
                       "Real sales": found.has_sales.map(lambda h: "✅" if h else "—")}),
         hide_index=True, width="stretch", height=280, on_select="rerun", selection_mode="single-row",
-        key="card_table")
-    if picked.selection.rows:
+        # new filters = new table, so a row picked in an older, longer list is never reused
+        key=f"card_table:{search}:{kinds}:{elements}:{rarities}:{sort}:{only_sales}")
+    if picked.selection.rows and picked.selection.rows[0] < len(found):
         st.session_state.card_id = found.card_id[picked.selection.rows[0]]
     if st.session_state.get("card_id") not in set(found.card_id):
         st.session_state.card_id = found.card_id[0]
