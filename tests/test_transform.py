@@ -281,3 +281,13 @@ def test_sales_confidence_penalises_thin_and_stale_markets():
     assert sales_confidence(6, 53) == "medium"
     assert sales_confidence(2, 5) == "low"
     assert sales_confidence(50, 200) == "low"
+
+
+def test_parse_card_keeps_category_and_types():
+    from ingestion.tcgdex import parse_card
+    base = {"id": "sv03.5-006", "name": "Charizard ex", "localId": "006", "rarity": "Double rare",
+            "set": {"id": "sv03.5", "name": "151", "cardCount": {"official": 165}}}
+    c = parse_card({**base, "category": "Pokemon", "types": ["Fire"]})
+    assert (c["category"], c["types"]) == ("Pokemon", "Fire")
+    trainer = parse_card({**base, "category": "Trainer"})
+    assert (trainer["category"], trainer["types"]) == ("Trainer", None)

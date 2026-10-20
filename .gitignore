@@ -18,3 +18,6 @@ INTERVIEW_UPDATE.md
 data/alerts/
 data/audit/
 PROGRESS.md
+
+# browser screenshots from local checks
+.playwright-mcp/
