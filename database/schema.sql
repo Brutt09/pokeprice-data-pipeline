@@ -55,6 +55,8 @@ create table if not exists cards (
     source_updated_at timestamptz,
     ingested_at       timestamptz not null default now()
 );
+alter table cards add column if not exists category text;   -- Pokemon / Trainer / Energy (added 2026-10-20)
+alter table cards add column if not exists types text;      -- element, e.g. 'Fire'
 create index if not exists ix_cards_set_number on cards (set_id, collector_number);
 
 -- One row per printed version of a card. "finish" is what matching and pricing key on;
@@ -174,7 +176,7 @@ create table if not exists price_estimates (
     card_id          text not null references cards (card_id),
     finish           text not null,
     grade            text not null,
-    estimate_type    text not null check (estimate_type in ('reference', 'listing', 'sales')),
+    estimate_type    text not null check (estimate_type in ('reference', 'listing', 'sales', 'comparable')),
     estimated_price  numeric(12, 2) not null,
     currency         text not null,
     price_low        numeric(12, 2),
@@ -186,11 +188,19 @@ create table if not exists price_estimates (
     is_synthetic     boolean not null default false,
     calculated_at    timestamptz not null default now()
 );
+-- for DBs created before 'comparable' existed
+alter table price_estimates drop constraint if exists price_estimates_estimate_type_check;
+alter table price_estimates add constraint price_estimates_estimate_type_check
+    check (estimate_type in ('reference', 'listing', 'sales', 'comparable'));
 create index if not exists ix_estimates_product on price_estimates (card_id, finish, grade, estimate_type, calculated_at desc);
 
+-- Comparable estimates are a batch (like anomalies): a product the latest run no longer
+-- estimates must not keep an old comparable value.
 create or replace view v_latest_estimates as
 select distinct on (card_id, finish, grade, estimate_type) *
 from price_estimates
+where estimate_type <> 'comparable'
+   or calculated_at = (select max(calculated_at) from price_estimates where estimate_type = 'comparable')
 order by card_id, finish, grade, estimate_type, calculated_at desc;
 
 -- ---------- anomalies ----------
@@ -235,7 +245,9 @@ create table if not exists buyback_quotes (
 );
 create index if not exists ix_quotes_product on buyback_quotes (card_id, finish, grade, quoted_at desc);
 
+-- Every run quotes every product, so only the latest batch is current.
 create or replace view v_latest_quotes as
 select distinct on (card_id, finish, grade) *
 from buyback_quotes
+where quoted_at = (select max(quoted_at) from buyback_quotes)
 order by card_id, finish, grade, quoted_at desc;

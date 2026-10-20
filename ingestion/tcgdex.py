@@ -39,6 +39,8 @@ def parse_card(card: dict) -> dict:
         "local_id": card["localId"],
         "collector_number": collector_number(card["localId"]),
         "rarity": card.get("rarity"),
+        "category": card.get("category"),                    # Pokemon / Trainer / Energy
+        "types": ", ".join(card.get("types") or []) or None,  # e.g. "Fire"; none for trainers
         "image_url": card.get("image"),
         "source_updated_at": card.get("updated"),
     }
@@ -110,14 +112,14 @@ def parse_cardmarket_prices(variant: dict) -> list[dict]:
 
 UPSERT_CARD = text("""
 insert into cards (card_id, set_id, set_name, set_official_count, name, local_id,
-                   collector_number, rarity, image_url, source_updated_at)
+                   collector_number, rarity, category, types, image_url, source_updated_at)
 values (:card_id, :set_id, :set_name, :set_official_count, :name, :local_id,
-        :collector_number, :rarity, :image_url, :source_updated_at)
+        :collector_number, :rarity, :category, :types, :image_url, :source_updated_at)
 on conflict (card_id) do update set
     set_name = excluded.set_name, set_official_count = excluded.set_official_count,
     name = excluded.name, local_id = excluded.local_id,
     collector_number = excluded.collector_number, rarity = excluded.rarity,
-    image_url = excluded.image_url, source_updated_at = excluded.source_updated_at,
+    category = excluded.category, types = excluded.types, image_url = excluded.image_url, source_updated_at = excluded.source_updated_at,
     ingested_at = now()
 """)
 UPSERT_VARIANT = text("""

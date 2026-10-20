@@ -4,7 +4,10 @@ Market value: the estimates are never averaged together. The value comes from
 the best available evidence, in this order:
   1. sales      eBay sold median, if confidence is medium or high
   2. reference  price guide, for RAW cards only
-  3. listing    real active asking prices (never synthetic), discounted because
+  3. comparable model estimate from similar cards' sales (graded products with
+                no reliable sales of their own). Always 'low' here: a human
+                checks it, it never makes an automatic offer
+  4. listing    real active asking prices (never synthetic), discounted because
                 asking prices sit above what buyers pay
 Open anomalies lower confidence ('warn') or block automatic offers ('error').
 
@@ -22,7 +25,7 @@ from sqlalchemy import text
 
 from common.db import engine
 
-POLICY_VERSION = "2026-10-19.v1"
+POLICY_VERSION = "2026-10-20.v2"
 MARGIN = {"high": 0.25, "medium": 0.35}   # share of market value kept as margin
 LISTING_DISCOUNT = 0.85                   # asking -> expected sale price, when only listings exist
 BULK_BELOW_EUR = 2.0
@@ -42,6 +45,9 @@ def choose_market_value(estimates: dict) -> dict | None:
     ref = estimates.get("reference")
     if ref and estimates.get("grade") == "RAW":
         return {"value": ref["price"], "basis": "reference", "confidence": ref["confidence"], "n": ref["n"]}
+    comp = estimates.get("comparable")
+    if comp:
+        return {"value": comp["price"], "basis": "comparable", "confidence": "low", "n": comp["n"]}
     listing = estimates.get("listing")
     if listing and not listing["is_synthetic"]:
         return {"value": round(listing["price"] * LISTING_DISCOUNT, 2), "basis": "listing_discounted",
